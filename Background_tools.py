@@ -171,7 +171,7 @@ def Make_noisy_mask(path,low_treshold_para,noise_treshold,extend_para):
         # plt.title("filled 2 mask")
         # plt.show()
         
-        print("Noisy mask created")
+        print("Noisy mask created!\n")
         return final_mask
 
 
@@ -318,10 +318,10 @@ def Interative_BG_detection(phase, poly_order, pix, method, starting_mask, noise
        phase (numpy.ndarray): DHM phase image
        Poly_Ord (int): Polynomial order for the background fit.
        pix (float): Pixel size.
-       method (str): Method of background selection. #TODO
+       method (str): Method of background selection. #TODO -> currently only using method "mask"...
                        - "clamp" : Clamp test image (y0) to not exceed background (bk) -> y0 = np.minimum(y0, bk)
                                    This ensures that the evolving test image never exceeds the current baseline.
-                       - "mask" ***under construction*** : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
+                       - "mask" : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
        starting_mask (numpy.ndarray of boolean): Initial mask to exclude parts from linear fit (pixels to exclude = True),
                                                  If "None" or "False": start with empty mask
        noise_delta (float): Constant to be added to background fit to account for noise in the background
@@ -509,10 +509,10 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
                        The frames of the sequence (bin or bnr) are 2D arrays of float.
        Poly_Ord (int): Polynomial order for the background fit.
        pix (float): Pixel size.
-       method (str): Method of background selection.
+       method (str): Method of background selection. #TODO -> currently only using method "mask"...
                        - "clamp" : Clamp test image (y0) to not exceed background (bk) -> y0 = np.minimum(y0, bk)
                                    This ensures that the evolving test image never exceeds the current baseline.
-                       - "mask" ***under construction*** : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
+                       - "mask" : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
        starting_mask (numpy.ndarray of boolean): Initial mask to exclude parts from linear fit (pixels to exclude = True),
                                                  If "None" or "False": start with empty mask
        noise_delta (float): Constant to be added to background fit to account for noise in the background
@@ -523,8 +523,7 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
         global_mask (numpy.ndarray of boolean): Final mask of foregound/background (foreground = True)
 
     '''
-    print("Starting background generation:")
-    print(path)
+    print("Find global background")
     file_name, file_type = os.path.splitext(path) # get file suffix
 
     # Depending on file suffix, read sequence lenght and file header
@@ -546,16 +545,6 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
         pz=in_file_header['px_size'][0]
         hconv=str(in_file_header['hconv'][0])
         uc=str(in_file_header['unit_code'][0])
-        
-        new_folder = os.path.dirname(binfolder) +os.sep+ os.path.basename(binfolder)+"_BGtZ"
-        if not os.path.isdir(new_folder):
-            os.mkdir(new_folder)
-        if len(os.listdir(new_folder)) != 0:
-            answ = messagebox.askquestion('Output folder is not empty!', 'Output folder is not empty.\nDo you want to proceed?')
-            print("Output folder is not empty:\n",binfolder)
-            if answ == "no":
-                print("Stack registration cancelled.")
-                go_on = False
         
     elif file_type == ".bnr":
         print("bnr-file detected")
@@ -584,6 +573,7 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
         
         frame_size = H * W * 4 # Number of bytes per frame
         data_start = fileID.tell() # Cursor position in the binary file
+        # print("Datastart",data_start)
                     
     else:
         print("ERROR: Wrong file type")
@@ -604,14 +594,9 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
             bg_frame_list.append(round(nImages/2)-1) # middle frame
             bg_frame_list.append(nImages-1) # last frame
         elif bg_frame_num > 3 and bg_frame_num <= nImages:
-            for i in range(bg_frame_num-1):
-                
-                step = round(nImages/(bg_frame_num-1)*1000)/1000
+            for i in range(bg_frame_num):
 
-                bg_frame_list.append(round(i*step))
-            
-            # if not nImages % bg_frame_num == 0:
-            bg_frame_list.append(nImages-1)
+                bg_frame_list.append( round( (nImages-1)/(bg_frame_num-1)*i ) +1 )
                 
         else: print("Wrong input for bg_frame_num")
         
@@ -621,23 +606,20 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
         else:
             global_mask = np.np.zeros((H, W))
         
-        print(bg_frame_list)
-        print("Datastart",data_start)
-
+        print("List of frames for global background:",bg_frame_list)
+        
         # Loop through bg_frame_list
         cc = 1
         for frame in bg_frame_list:
-            print(f"Processing {cc} of {bg_frame_num}... (frame {frame+1} of {nImages})")
+            print(f"Processing {cc} of {bg_frame_num}... (frame {frame} of {nImages})")
             cc+=1
             
             if file_type == ".bin":
                 
-                (image,in_file_header)=binkoala.read_mat_bin(binfolder +os.sep+ bin_files[i]) # load frame i
+                (image,in_file_header)=binkoala.read_mat_bin(binfolder +os.sep+ bin_files[frame-1]) # load frame
  
             elif file_type == ".bnr":
-                print(frame)
-                google = int(data_start) + int(i) * int(frame_size)
-                print(google)
+                google = int(data_start) + int(frame-1) * int(frame_size)
                 fileID.seek(google, 0)
                 image = np.fromfile(fileID, dtype="f4", count=H*W).reshape((H, W))
             
@@ -646,12 +628,12 @@ def Sequence_BG_detection(path, polynom_order, method, starting_mask, noise_delt
             
             # # Plotting (Optional)
             # plt.imshow(image)
-            # plt.title("Background of frame "+str(i)+" of "+str(nImages))
+            # plt.title("Background of frame "+str(frame)+" of "+str(nImages))
             # plt.show()
 
         if file_type == ".bnr":
             fileID.close
-    print("Globel background mask found. Convergence:",round(np.sum(global_mask) / (global_mask.shape[0]*global_mask.shape[1])*100*100)/100)
+    print(f"Globel background mask found! Convergence: {round(np.sum(global_mask) / (global_mask.shape[0]*global_mask.shape[1])*100*100)/100}.\n")
     return global_mask
     
 
@@ -687,16 +669,12 @@ def Sequence_BGtoZ(path, Poly_Ord, BG_mask):
         nImages = len(bin_files) # sequence length
         # Get header info and 1st image from sequence
         (image,in_file_header)=binkoala.read_mat_bin(binfolder +os.sep+ bin_files[0])
-        hv=str(in_file_header['version'][0])
-        end=str(in_file_header['endian'][0])
-        hz=str(in_file_header['head_size'][0])
-        W=str(in_file_header['width'][0])
-        H=str(in_file_header['height'][0])
+        W=in_file_header['width'][0]
+        H=in_file_header['height'][0]
         pz=in_file_header['px_size'][0]
-        hconv=str(in_file_header['hconv'][0])
-        uc=str(in_file_header['unit_code'][0])
+        hconv=in_file_header['hconv'][0]
         
-        new_folder = os.path.dirname(binfolder) +os.sep+ os.path.name(binfolder)+"_BGtZ"
+        new_folder = os.path.dirname(binfolder) +os.sep+ os.path.basename(binfolder)+"_BGtZ"
         if not os.path.isdir(new_folder):
             os.mkdir(new_folder)
         if len(os.listdir(new_folder)) != 0:
@@ -755,14 +733,16 @@ def Sequence_BGtoZ(path, Poly_Ord, BG_mask):
         print("ERROR: Wrong file type")
         go_on = False
         return None
-        
+
     if go_on:
         # Loop through frames
         for i in range(nImages):
             print("Processing frame",i+1,"of",nImages,"...")
             # get frame i from sequence
             if file_type == ".bin":
+                
                 (image,in_file_header)=binkoala.read_mat_bin(binfolder +os.sep+ bin_files[i])
+
             elif file_type == ".bnr":
                 for k in range(H):
                     image[k,:] = np.fromfile(fileID, dtype="f4", count=W)
@@ -770,11 +750,11 @@ def Sequence_BGtoZ(path, Poly_Ord, BG_mask):
             BG, _= masked_fit_2D(image, Poly_Ord, BG_mask)
             
             phase_cor = image - BG
-            
+
             # Write corrected frame to file
             #save new bin-file #k
             if file_type == ".bin":
-                outfile=new_folder+'/'+bin_files[i]
+                outfile = new_folder +'/'+ bin_files[i]
                 binkoala.write_mat_bin(outfile, phase_cor, W, H, pz, hconv, unit_code=1)
             elif file_type == ".bnr":
                 phase_cor.astype(np.float32).tofile(outfileID)

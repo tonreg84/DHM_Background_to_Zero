@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Sep 18 13:52:10 2025
+DHM Background to Zero
+Autor: tonreg, team UMI, CNP-CHUV Lausanne
+Version: 20260108
 
-@author: ge1582
-
+Programme to flatten phase images obtained with Digital Holographic Microscopes. Find image background. Polynomial fit to background. Subtract fitted background from image.
 
 Set parameters:
     
@@ -32,7 +33,7 @@ import Background_tools as BGt
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from os import path
-from numpy import uint8, zeros, ndarray
+from numpy import uint8, zeros, ndarray, argwhere
 from PIL import Image, ImageTk
 
 class ConsoleRedirector(object):
@@ -46,7 +47,6 @@ class ConsoleRedirector(object):
     def flush(self):
         pass
 
-
 def manage_widgets(frame,state):
     for child in frame.winfo_children():
         try:
@@ -55,9 +55,11 @@ def manage_widgets(frame,state):
             print(child)
             pass   # some widgets (e.g. frames, labels) don't have a "state"
 
-
+# Parameters:
+prog_vers = "20260106"
+values = {} # dictionnary for all parameter values
 noisy_mask = None
-global_BG = None
+global_mask = None
 
 displaysize = 500
 
@@ -123,11 +125,15 @@ for para in para_list:
     para_dict[para]["defval"] = default_value_dict[para]
 
 
-
 # Validation rules
 def validate_inputs(values):
     errors = []
     
+    if "file_path" in values.keys():
+        # file_path must not be empty
+        if not path.isfile(values["file_path"]):
+            errors.append("Valid file path must be selected")
+            
     if "low_treshold_para" in values.keys():
         # low_treshold_para: float > 0
         try:
@@ -186,36 +192,58 @@ def validate_inputs(values):
                 errors.append("bg_frame_num must be an integer > 0")
         except ValueError:
             errors.append("bg_frame_num must be an integer")
-    if "file_path" in values.keys():
-        # file_path must not be empty
-        if not path.isfile(values["file_path"]):
-            errors.append("Valid file path must be selected")
 
     return errors
 
-
 def browse_file():
-    global noisy_mask, global_BG
+    global values, noisy_mask, global_mask
     file_path = filedialog.askopenfilename()
     if file_path:
         file_entry.delete(0, tk.END)
         file_entry.insert(0, file_path)
+        values = {}
         noisy_mask = None
-        global_BG = None
-        
+        global_mask = None
         
 def submit(btnstrg):
     thread = Thread(target = main_proceedure, args = (btnstrg,), daemon=True)
     thread.start()
 
 def main_proceedure(btnstrg):
-    global noisy_mask, global_BG
+    global values, noisy_mask, global_mask
+    
+    if btnstrg == "sNM": # Save noisy mask to png file
+        if not isinstance(noisy_mask, ndarray):
+            messagebox.showerror(":Error", "Make noisy mask first!")
+        else:
+            # Make file name depending on file format
+            file_name, file_type = path.splitext(values["file_path"]) # get file suffix
+            if file_type == ".bin":
+                mask_file = path.dirname(path.dirname(values["file_path"])) + "/" + path.basename(path.splitext(values["file_path"])[0]) + "_NoisyMask.png"
+            elif file_type == ".bnr":
+                mask_file = file_name + "_NoisyMask.png"
+            
+            Image.fromarray(noisy_mask.astype(uint8)*255, mode="L").save(mask_file)
+        
+    if btnstrg == "sGM":
+        # Save global mask to png file
+        if not isinstance(global_mask, ndarray):
+            messagebox.showerror(":Error", "Make global mask first!")
+        else:
+            # Make file name depending on file format
+            file_name, file_type = path.splitext(values["file_path"]) # get file suffix
+            if file_type == ".bin":
+                mask_file = path.dirname(path.dirname(values["file_path"])) + "/" + path.basename(path.splitext(values["file_path"])[0]) + "_GlobalMask.png"
+            elif file_type == ".bnr":
+                mask_file = file_name + "_GlobalMask.png"
+            
+            Image.fromarray(global_mask.astype(uint8)*255, mode="L").save(mask_file)
+
     if btnstrg == "NM":
         
         manage_widgets(main_frame,"disabled")
         
         # Check input:
-        values = {}
         for para in NM_list:
             values[para] = para_dict[para]['entry'].get()
         values["file_path"] = file_entry.get()
@@ -223,7 +251,7 @@ def main_proceedure(btnstrg):
         if errors:
             messagebox.showerror("Validation Error", "\n".join(errors))
         else:
-            print("Input parameters validated! Proceeding...")
+            print("Input parameters validated!")
             
             # Convert input from string to float or int
             for para in NM_list:
@@ -231,18 +259,12 @@ def main_proceedure(btnstrg):
                     values[para] = float(values[para])
                 if para_dict[para]['type'] == "int":
                     values[para] = int(values[para])
-            
-            file_name, file_extension = path.splitext(values["file_path"])
            
             # Proceed
             # A) make noisy mask
             noisy_mask = BGt.Make_noisy_mask(values["file_path"],values["low_treshold_para"]/360*2*3.14,values["noise_treshold"]/360*2*3.14,values["extend_para"]) # make mask to excludes pixels with very low phase values and noisy pixels by noise detection by phase treshold.
             
             update_canvas_from_array(canvasNM,noisy_mask)
-            if save_var1.get():
-            # Save noisy mask to png file
-                mask_file = file_name + "_NoisyMask.png"
-                Image.fromarray(noisy_mask.astype(uint8)*255, mode="L").save(mask_file)
         
         manage_widgets(main_frame,"normal")
     
@@ -254,7 +276,6 @@ def main_proceedure(btnstrg):
             messagebox.showerror(":Error", "Make noisy mask first!")
         else:
             # Check input:
-            values = {}
             for para in BG_list:
                 values[para] = para_dict[para]['entry'].get()
             values["file_path"] = file_entry.get()
@@ -262,7 +283,7 @@ def main_proceedure(btnstrg):
             if errors:
                 messagebox.showerror("Validation Error", "\n".join(errors))
             else:
-                print("Input parameters validated! Proceeding...")
+                print("Input parameters validated!")
                 
                 # Convert input from string to float or int
                 for para in BG_list:
@@ -270,99 +291,76 @@ def main_proceedure(btnstrg):
                         values[para] = float(values[para])
                     if para_dict[para]['type'] == "int":
                         values[para] = int(values[para])
-                
-                file_name, file_extension = path.splitext(values["file_path"])
-                
-                #TODO:
+
                 '''
-                Method of background selection. #TODO
+                Method of background selection. 
                                 - "clamp" : Clamp test image (y0) to not exceed background (bk) -> y0 = np.minimum(y0, bk)
                                             This ensures that the evolving test image never exceeds the current baseline.
-                                - "mask" ***under construction*** : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
+                                - "mask" : Updat binary mask for every itineration, to exlude evolving foreground from surface fit.
                 '''
-                method = "mask"
+                method = "mask" #TODO : currently only using method "mask"...
                 
-                global_BG = BGt.Sequence_BG_detection(values["file_path"],values["polynom_order"],method,noisy_mask,values["noise_delta"]/360*2*3.14,values["convergence_treshold"],values["mask_var_trsh"],values["bg_frame_num"])
-                update_canvas_from_array(canvasGM,global_BG)
-                if save_var1.get():
-                    # Save global BG mask to png file
-                    glob_mask_file = file_name + "_globBGmask.png"
-                    Image.fromarray(global_BG.astype(uint8)*255, mode="L").save(glob_mask_file)
+                global_mask = BGt.Sequence_BG_detection(values["file_path"],values["polynom_order"],method,noisy_mask,values["noise_delta"]/360*2*3.14,values["convergence_treshold"],values["mask_var_trsh"],values["bg_frame_num"])
+                update_canvas_from_array(canvasGM,global_mask)
         
         manage_widgets(main_frame,"normal")
 
     elif btnstrg == "BGtZ":
-        
+   
         manage_widgets(main_frame,"disabled")
         
         goo = True
         if not isinstance(noisy_mask, ndarray):
-            messagebox.showerror(":Error", "Make noisy mask first!")
+            messagebox.showerror(":Error", "Make noisy mask and a global background mask first!")
             goo = False
         else:
-            if not isinstance(global_BG, ndarray):
-                messagebox.showerror(":Error", "Make a background mask first!")
+            if not isinstance(global_mask, ndarray):
+                messagebox.showerror(":Error", "Make a global background mask first!")
                 goo = False
         
         if goo:
-            # Check input:
-            values = {}
-            for para in para_dict.keys():
-                values[para] = para_dict[para]['entry'].get()
-            values["file_path"] = file_entry.get()
-            errors = validate_inputs(values)
-            if errors:
-                messagebox.showerror("Validation Error", "\n".join(errors))
-            else:
-                print("Input parameters validated! Proceeding...")
-                
-                # Convert input from string to float or int
-                for para in para_dict.keys():
-                    if para_dict[para]['type'] == "flt":
-                        values[para] = float(values[para])
-                    if para_dict[para]['type'] == "int":
-                        values[para] = int(values[para])
-                
-                file_name, file_extension = path.splitext(values["file_path"])
-               
-                # Proceed
-                # A) make noisy mask
-                if not isinstance(noisy_mask, ndarray):
-                    noisy_mask = BGt.Make_noisy_mask(values["file_path"],values["low_treshold_para"]/360*2*3.14,values["noise_treshold"]/360*2*3.14,values["extend_para"]) # make mask to excludes pixels with very low phase values and noisy pixels by noise detection by phase treshold.
-                    
-                    update_canvas_from_array(canvasNM,noisy_mask)
-                    if save_var1.get():
-                    # Save noisy mask to png file
-                        mask_file = file_name + "_NoisyMask.png"
-                        Image.fromarray(noisy_mask.astype(uint8)*255, mode="L").save(mask_file)
-        
-                # B)
-                # ...
-        
-                # C)
-                # # Read initial mask from png file
-                # test_mask = Image.open(mask_file).convert("L")
-                # arr = array(test_mask) # Convert to numpy
-                # noisy_mask = arr > 0 # Make boolean array by threshold: >0 → True, else False
-                
-                #TODO:
-                '''
-                Method of background selection. #TODO
-                                - "clamp" : Clamp test image (y0) to not exceed background (bk) -> y0 = np.minimum(y0, bk)
-                                            This ensures that the evolving test image never exceeds the current baseline.
-                                - "mask" ***under construction*** : Create binary mask for evolving foregound/background, to exlude foreground from surface fit.
-                '''
-                method = "mask"
-                if not isinstance(global_BG, ndarray):
-                    global_BG = BGt.Sequence_BG_detection(values["file_path"],values["polynom_order"],method,noisy_mask,values["noise_delta"]/360*2*3.14,values["convergence_treshold"],values["mask_var_trsh"],values["bg_frame_num"])
-                    update_canvas_from_array(canvasGM,global_BG)
-                    if save_var1.get():
-                        # Save global BG mask to png file
-                        glob_mask_file = file_name + "_globBGmask.png"
-                        Image.fromarray(global_BG.astype(uint8)*255, mode="L").save(glob_mask_file)
             
-                # D) Apply background-to-zero on sequence by fitting background frame by frame with a given constant background mask.
-                BGt.Sequence_BGtoZ(values["file_path"],values["polynom_order"],global_BG)
+            file_name, file_extension = path.splitext(values["file_path"])
+           
+            '''
+            Method of background selection. 
+                            - "clamp" : Clamp test image (y0) to not exceed background (bk) -> y0 = np.minimum(y0, bk)
+                                        This ensures that the evolving test image never exceeds the current baseline.
+                            - "mask" : Updat binary mask for every itineration, to exlude evolving foreground from surface fit.
+            '''
+            method = "mask" #TODO : currently only using method "mask"...
+                
+            # Save configuration and global mask to file
+            # Make file name depending on file format
+            file_name, file_type = path.splitext(values["file_path"]) # get file suffix
+            if file_type == ".bin":
+                config_file = path.dirname(path.dirname(values["file_path"])) + "/" + "BGtZparas.txt"
+            elif file_type == ".bnr":
+                config_file = file_name + "_BGtZparas.txt"
+
+            with open(config_file, 'w') as fileID:
+            
+                fileID.write("Background to Zero configuration:\n\n")
+                fileID.write('BGtZ done with programme "BGt DHM Background to Zero" (BGtZero_user_GUI.py)\n')
+                fileID.write("Autor: tonreg, team UMI, CNP-CHUV Lausanne\n")
+                fileID.write(f"Version: {prog_vers}\n")
+                
+                fileID.write("Parameter:\n")
+                for para in para_list:
+                    fileID.write(f"{para}: {values[para]}\n")
+
+                fileID.write("\nGlobal background mask:\n")
+                fileID.write(f"Image height and width: {global_mask.shape}\n")
+                fileID.write("Background mask coordinates (row, column):\n")
+                
+                BG_coords = argwhere(global_mask == False)
+                
+                for i in range(len(BG_coords)):
+                    fileID.write(f"({BG_coords[i][0]},{BG_coords[i][1]}),")
+                fileID.write(f"({BG_coords[-1][0]},{BG_coords[-1][1]})")
+        
+            # Flatten every frame by fitting background using global background mask.
+            BGt.Sequence_BGtoZ(values["file_path"],values["polynom_order"],global_mask)
 
         manage_widgets(main_frame,"normal")
 
@@ -392,7 +390,7 @@ def update_canvas_from_array(canvas,array):
 root = tk.Tk()
 root.title("Background to Zero")
 root.iconbitmap("road_roller.ico")
-root.geometry("1750x600")
+root.geometry("1750x700")
 
 
 # Create the Notebook (tab container)
@@ -431,11 +429,10 @@ main_frame = tk.Frame(my_canvas)
 my_canvas.create_window((0, 0), window=main_frame, anchor="nw")
 
 
-
 # File selection row
 tk.Label(main_frame, text="Select File").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-file_entry = tk.Entry(main_frame, width=40)
-file_entry.grid(row=0, column=1, padx=5, pady=5)
+file_entry = tk.Entry(main_frame, width=30)
+file_entry.grid(row=0, column=1, padx=0, pady=5)
 browse_btn = tk.Button(main_frame, text="Browse", command=browse_file)
 browse_btn.grid(row=0, column=2, padx=5, pady=5)
 
@@ -444,7 +441,7 @@ tk.Label(main_frame, text="Make-Noisy-Mask Parameters:").grid(row=1, column=0, s
 
 for i, para in enumerate(NM_list):
     tk.Label(main_frame, text=f"{para_dict[para]['text']} ({para_dict[para]['hint']})").grid(row=i+2, column=0, sticky="w", padx=5, pady=5)
-    entry = tk.Entry(main_frame)
+    entry = tk.Entry(main_frame, width=10)
     entry.grid(row=i+2, column=1, padx=5, pady=5)
     para_dict[para]['entry'] = entry
     entry.insert(0, para_dict[para]['defval'])
@@ -452,38 +449,35 @@ for i, para in enumerate(NM_list):
 NM_button = tk.Button(main_frame, text="Make Noisy Mask", command=lambda:submit("NM"))
 NM_button.grid(row=len(NM_list)+1, column=2, pady=10)
 
-NM_row_offset = len(NM_list)+2
+saveNM_button = tk.Button(main_frame, text="Save Noisy Mask as png", command=lambda:submit("sNM"))
+saveNM_button.grid(row=len(NM_list)+2, column=2, padx=5, pady=5)
+
+NM_row_offset = len(NM_list)+3
 
 #Background-Estimation Parameters
 tk.Label(main_frame, text="Background-Estimation Parameters:").grid(row=NM_row_offset, column=0, sticky="w", padx=5, pady=5)
 
 for i, para in enumerate(BG_list):
     tk.Label(main_frame, text=f"{para_dict[para]['text']} ({para_dict[para]['hint']})").grid(row=NM_row_offset+1+i, column=0, sticky="w", padx=5, pady=5)
-    entry = tk.Entry(main_frame)
+    entry = tk.Entry(main_frame, width=10)
     entry.grid(row=NM_row_offset+1+i, column=1, padx=5, pady=5)
     para_dict[para]['entry'] = entry
     entry.insert(0, para_dict[para]['defval'])
     
 BG_button = tk.Button(main_frame, text="Make Global Mask", command=lambda:submit("GM"))
-BG_button.grid(row=len(NM_list) + len(BG_list) + 2, column=2, pady=10)
+BG_button.grid(row=NM_row_offset + len(BG_list) + 1, column=2, pady=10)
 
-BG_row_offset = len(NM_list) + len(BG_list) + 3
+saveGM_button = tk.Button(main_frame, text="Save Global Mask as png", command=lambda:submit("sGM"))
+saveGM_button.grid(row=NM_row_offset + len(BG_list) + 2, column=2, padx=5, pady=5)
 
-tk.Label(main_frame, text="   ").grid(row=BG_row_offset, column=0, sticky="w", padx=5, pady=5)
+BG_row_offset = row=NM_row_offset + len(BG_list) + 3
 
-# Checkbox for saving noisy mask:
-save_var1 = tk.BooleanVar()
-save_checkbox1 = tk.Checkbutton(main_frame, text="Save Noisy Mask as png", variable=save_var1)
-save_checkbox1.grid(row=BG_row_offset + 1, column=0, padx=5, pady=5)
-# Checkbox for saving gloabl mask:
-save_var2 = tk.BooleanVar()
-save_checkbox2 = tk.Checkbutton(main_frame, text="Save Global Mask as png", variable=save_var2)
-save_checkbox2.grid(row=BG_row_offset + 2, column=0, padx=5, pady=5)
+# tk.Label(main_frame, text="   ").grid(row=BG_row_offset, column=0, sticky="w", padx=5, pady=5)
 
-tk.Label(main_frame, text="   ").grid(row=BG_row_offset + 3, column=0, sticky="w", padx=5, pady=5)
+# tk.Label(main_frame, text="   ").grid(row=BG_row_offset + 3, column=0, sticky="w", padx=5, pady=5)
 
-submit_btn = tk.Button(main_frame, text="Background to ZERO", command=lambda:submit("BGtZ"))
-submit_btn.grid(row=BG_row_offset + 1, column=2, pady=10)
+submit_btn = tk.Button(main_frame, text="Background to ZERO", command=lambda:submit("BGtZ"), height = 3, width = 30)
+submit_btn.grid(row=NM_row_offset + len(BG_list) + 2, column=0, padx = 30, pady=0)
 
 # Canvas for numpy boolean array visualization
 canvasNM = tk.Canvas(main_frame, bg="white", width=displaysize, height=displaysize)
@@ -495,7 +489,6 @@ canvasGM.grid(row=0, column=4, rowspan=15, padx=10, pady=10)
 
 # Keep references to images
 img_tk_list = []
-
 
 # -------------------------------------------------------------------
 # Console text field
